@@ -1,46 +1,45 @@
 import os
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from google import genai
-from google.genai import types
 
 app = FastAPI()
 
-# 서버 환경 변수에서 API 키를 가져옴 (보안 강화)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# 환경 변수에서 Gemini API 키 가져오기
+api_key = os.environ.get("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key)
 
-if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-
-system_prompt = """
-너는 패션 덕후이자 사용자의 친한 친구 '옷미새'야.
-사용자의 키, 몸무게, 체형 고민을 바탕으로 단점을 완벽히 커버해주는 핏과 스타일을 추천해줘.
-추천 시 무신사/네이버 쇼핑 검색 링크([텍스트](URL))를 함께 제공해줘.
-"""
+class Message(BaseModel):
+    role: str
+    content: str
 
 class ChatRequest(BaseModel):
-    messages: list
+    messages: list[Message]
 
-# 메인 접속 시 index.html 띄우기
-@app.get("/")
-async def read_index():
-    return FileResponse("index.html")
+@app.get("/", response_class=HTMLResponse)
+def read_root():
+    if os.path.exists("index.html"):
+        with open("index.html", "r", encoding="utf-8") as f:
+            return f.read()
+    return "index.html 파일을 찾을 수 없습니다."
 
-# AI 대화 API
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="서버 API 키가 설정되지 않았습니다.")
+def chat_endpoint(request: ChatRequest):
     try:
+        # 대화 내용을 Gemini 형식으로 변환
+        contents = []
+        for msg in request.messages:
+            role = "user" if msg.role == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": msg.content}]})
+
+        # 최신 google-genai 라이브러리 호출
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=request.messages,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.7,
-            )
+            model="gemini-2.5-flash",
+            contents=contents,
         )
+        
         return {"reply": response.text}
     except Exception as e:
+        print(f"Error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
