@@ -1,190 +1,54 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>옷미새 - AI 패션 스타일리스트</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
-        }
-        body {
-            background-color: #f5f5f7;
-            color: #333;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container {
-            width: 100%;
-            max-width: 600px;
-            background: #ffffff;
-            border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            height: 90vh;
-        }
-        header {
-            text-align: center;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #eee;
-            margin-bottom: 16px;
-        }
-        header h1 {
-            font-size: 1.5rem;
-            color: #1d1d1f;
-        }
-        header p {
-            font-size: 0.9rem;
-            color: #86868b;
-            margin-top: 4px;
-        }
-        .chat-box {
-            flex: 1;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            padding-right: 4px;
-        }
-        .message {
-            max-width: 80%;
-            padding: 12px 16px;
-            border-radius: 16px;
-            font-size: 0.95rem;
-            line-height: 1.5;
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-        .user-message {
-            align-self: flex-end;
-            background-color: #0071e3;
-            color: white;
-            border-bottom-right-radius: 4px;
-        }
-        .bot-message {
-            align-self: flex-start;
-            background-color: #e9e9eb;
-            color: #1d1d1f;
-            border-bottom-left-radius: 4px;
-        }
-        .input-area {
-            display: flex;
-            gap: 8px;
-            margin-top: 16px;
-            padding-top: 12px;
-            border-top: 1px solid #eee;
-        }
-        input[type="text"] {
-            flex: 1;
-            padding: 14px 18px;
-            border: 1px solid #d2d2d7;
-            border-radius: 12px;
-            font-size: 1rem;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        input[type="text"]:focus {
-            border-color: #0071e3;
-        }
-        button {
-            padding: 0 20px;
-            background-color: #0071e3;
-            color: white;
-            border: none;
-            border-radius: 12px;
-            font-weight: 600;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-        button:hover {
-            background-color: #0077ed;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>👔 옷미새 - AI 스타일리스트</h1>
-            <p>오늘 뭐 입을지 고민될 땐 언제든 물어보세요!</p>
-        </header>
+import os
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
+
+app = FastAPI()
+
+api_key = os.environ.get("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key)
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: list[Message]
+
+@app.get("/", response_class=HTMLResponse)
+def read_root():
+    if os.path.exists("index.html"):
+        with open("index.html", "r", encoding="utf-8") as f:
+            return f.read()
+    return "index.html 파일을 찾을 수 없습니다."
+
+@app.post("/api/chat")
+def chat_endpoint(request: ChatRequest):
+    try:
+        contents = []
+        for msg in request.messages:
+            role = "user" if msg.role == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": msg.content}]})
+
+        system_instruction = (
+            "당신은 전문 AI 패션 스타일리스트 '옷미새'입니다. 사용자의 코디를 추천할 때, "
+            "추천하는 주요 의류/아이템 이름에는 반드시 마크다운 링크 형식으로 "
+            "네이버 쇼핑 검색 링크를 걸어주세요. "
+            "형식 예시: [블랙 오버사이즈 블레이저](https://search.shopping.naver.com/search/all?query=블랙+오버사이즈+블레이저). "
+            "반드시 이 링크 형식을 지켜서 답변하세요."
+        )
+
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+            )
+        )
         
-        <div class="chat-box" id="chatBox">
-            <div class="message bot-message">안녕하세요! 오늘 어떤 날씨나 상황에 맞는 코디가 필요하신가요?</div>
-        </div>
-        
-        <div class="input-area">
-            <input type="text" id="userInput" placeholder="예: 오늘 성수동 데이트룩 추천해줘" onkeypress="if(event.key==='Enter') sendMessage()">
-            <button onclick="sendMessage()">전송</button>
-        </div>
-    </div>
-
-    <script>
-        const chatBox = document.getElementById('chatBox');
-        const userInput = document.getElementById('userInput');
-        let chatHistory = [];
-
-        async function sendMessage() {
-            const text = userInput.value.trim();
-            if (!text) return;
-
-            appendMessage(text, 'user-message');
-            userInput.value = '';
-
-            chatHistory.push({ role: 'user', content: text });
-
-            const loadingDiv = appendMessage('AI가 스타일을 추천하는 중입니다...', 'bot-message');
-
-            try {
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ messages: chatHistory })
-                });
-
-                const data = await response.json();
-                
-                loadingDiv.remove();
-                if (data.reply) {
-                    appendMessage(data.reply, 'bot-message');
-                    chatHistory.push({ role: 'assistant', content: data.reply });
-                } else {
-                    appendMessage('답변을 가져오는 중 오류가 발생했습니다.', 'bot-message');
-                }
-            } catch (error) {
-                loadingDiv.remove();
-                appendMessage('서버 통신 오류가 발생했습니다. 라이브 상태를 확인하세요.', 'bot-message');
-            }
-        }
-
-        function appendMessage(text, className) {
-            const div = document.createElement('div');
-            div.className = `message ${className}`;
-            
-            // 봇 메시지이고 로딩 중이 아닐 경우 마크다운 링크를 클릭 가능한 HTML 링크로 변환
-            if (className.includes('bot-message') && text !== 'AI가 스타일을 추천하는 중입니다...') {
-                const formattedText = text
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: #0071e3; text-decoration: underline; font-weight: bold;">$1 🔗</a>');
-                div.innerHTML = formattedText;
-            } else {
-                div.textContent = text;
-            }
-
-            chatBox.appendChild(div);
-            chatBox.scrollTop = chatBox.scrollHeight;
-            return div;
-        }
-    </script>
-</body>
-</html>
+        return {"reply": response.text}
+    except Exception as e:
+        print(f"Error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
